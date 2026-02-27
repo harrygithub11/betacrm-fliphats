@@ -1,0 +1,898 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id            Int       @id @default(autoincrement())
+  name          String?
+  email         String    @unique
+  password_hash String
+  role          AdminRole @default(super_admin)
+  avatar_url    String?   @db.VarChar(255)
+  phone         String?   @db.VarChar(20)
+  language      String?   @default("en") @db.VarChar(10)
+  timezone      String?   @default("UTC") @db.VarChar(50)
+  last_login    DateTime? @db.Timestamp(0)
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+
+  login_logs    AdminLoginLog[]
+  activity_logs AdminActivityLog[]
+  isOnline      Boolean            @default(false)
+  lastSeen      DateTime?
+
+  sentFlashMessages     FlashMessage[] @relation("SentFlashMessages")
+  receivedFlashMessages FlashMessage[] @relation("ReceivedFlashMessages")
+  presence              UserPresence?
+  meetings              Meeting[]      @relation("AdminMeetings")
+
+  @@map("admins")
+}
+
+model FlashMessage {
+  id             String    @id @default(cuid())
+  senderId       Int
+  receiverId     Int?
+  message        String    @db.Text
+  attachmentUrl  String?
+  attachmentType String? // "image", "video", "file"
+  type           String    @default("flash") // "flash", "chat", "group_chat"
+  isRead         Boolean   @default(false)
+  readAt         DateTime?
+  deliveredAt    DateTime?
+  sentAt         DateTime  @default(now())
+
+  sender   Admin  @relation("SentFlashMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver Admin? @relation("ReceivedFlashMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  parentMessageId String?
+  parentMessage   FlashMessage?  @relation("Thread", fields: [parentMessageId], references: [id])
+  replies         FlashMessage[] @relation("Thread")
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([isRead])
+  @@map("flash_messages")
+}
+
+model Customer {
+  id       Int           @id @default(autoincrement())
+  name     String?
+  email    String?       @unique
+  phone    String?
+  whatsapp String?
+  notes    String?       @db.Text
+  ltv      Decimal?      @default(0.00) @db.Decimal(10, 2)
+  source   String?       @default("Website")
+  score    CustomerScore @default(cold)
+  stage    CustomerStage @default(new)
+  tags     Json?
+  owner    String?       @default("unassigned")
+  location String?       @db.VarChar(255)
+
+  // Facebook Lead Gen fields
+  ad_id           String?  @db.VarChar(191)
+  ad_name         String?  @db.VarChar(191)
+  adset_id        String?  @db.VarChar(191)
+  adset_name      String?  @db.VarChar(191)
+  campaign_id     String?  @db.VarChar(191)
+  campaign_name   String?  @db.VarChar(191)
+  form_id         String?  @db.VarChar(191)
+  form_name       String?  @db.VarChar(191)
+  fb_lead_id      String?  @db.VarChar(191)
+  fb_lead_status  String?  @db.VarChar(191)
+  fb_created_time String?  @db.VarChar(191)
+  is_organic      Boolean  @default(false)
+  platform        String?  @db.VarChar(191)
+  budget          Decimal? @db.Decimal(10, 2)
+
+  created_at DateTime? @default(now()) @db.Timestamp(0)
+  updated_at DateTime? @default(now()) @updatedAt @db.Timestamp(0)
+
+  facebook_lead_id String? @unique
+  ad_data          Json?
+
+  orders       Order[]
+  interactions Interaction[]
+  tasks        Task[]
+  files        File[]
+
+  @@map("customers")
+}
+
+model Order {
+  id                  Int              @id @default(autoincrement())
+  customer_id         Int?
+  razorpay_order_id   String?
+  razorpay_payment_id String?
+  amount              Decimal?         @db.Decimal(10, 2)
+  currency            String?          @default("INR")
+  source              String?          @default("Website")
+  status              OrderStatus      @default(initiated)
+  invoice_url         String?          @db.VarChar(500)
+  proposal_status     ProposalStatus   @default(draft)
+  payment_mode        String?
+  onboarding_status   OnboardingStatus @default(pending)
+  due_date            DateTime?        @db.DateTime(0)
+  created_at          DateTime?        @default(now()) @db.Timestamp(0)
+  updated_at          DateTime?        @default(now()) @updatedAt @db.Timestamp(0)
+
+  customer           Customer?           @relation(fields: [customer_id], references: [id])
+  project_submission ProjectSubmission[]
+  interactions       Interaction[]
+  tasks              Task[]
+
+  @@map("orders")
+}
+
+enum OnboardingStatus {
+  pending
+  completed
+}
+
+model ProjectSubmission {
+  id              Int       @id @default(autoincrement())
+  order_id        Int?
+  brand_name      String?
+  assets_url      String?   @db.VarChar(500)
+  raw_data_json   Json?
+  submission_date DateTime? @default(now()) @db.Timestamp(0)
+
+  order Order? @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("project_submissions")
+}
+
+model Interaction {
+  id          Int                  @id @default(autoincrement())
+  customer_id Int?
+  order_id    Int?
+  type        InteractionType
+  content     String?              @db.Text
+  sentiment   InteractionSentiment @default(neutral)
+  created_by  Int?
+  created_at  DateTime?            @default(now()) @db.Timestamp(0)
+
+  customer Customer? @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  order    Order?    @relation(fields: [order_id], references: [id])
+
+  @@map("interactions")
+}
+
+model Task {
+  id               Int          @id @default(autoincrement())
+  customer_id      Int?
+  related_order_id Int?
+  assigned_to      Int?
+  title            String
+  description      String?      @db.Text
+  due_date         DateTime?    @db.Timestamp(0)
+  status           TaskStatus   @default(open)
+  priority         TaskPriority @default(medium)
+
+  created_by        Int?
+  status_changed_at DateTime? @db.Timestamp(0)
+  status_changed_by Int?
+  updated_at        DateTime? @default(now()) @updatedAt @db.Timestamp(0)
+  created_at        DateTime? @default(now()) @db.Timestamp(0)
+
+  customer Customer? @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  order    Order?    @relation(fields: [related_order_id], references: [id])
+
+  @@map("tasks")
+}
+
+model File {
+  id          Int       @id @default(autoincrement())
+  customer_id Int?
+  uploaded_by Int?
+  file_name   String
+  file_url    String    @db.VarChar(500)
+  file_type   String?   @default("link")
+  created_at  DateTime? @default(now()) @db.Timestamp(0)
+
+  customer Customer? @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
+  @@map("files")
+}
+
+model AdminLoginLog {
+  id         Int       @id @default(autoincrement())
+  admin_id   Int?
+  ip_address String?   @db.VarChar(45)
+  user_agent String?   @db.Text
+  login_time DateTime? @default(now()) @db.Timestamp(0)
+  success    Boolean?  @default(true)
+
+  admin Admin? @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@map("admin_login_logs")
+}
+
+model AdminActivityLog {
+  id                 Int       @id @default(autoincrement())
+  admin_id           Int?
+  action_type        String?   @db.VarChar(50)
+  action_description String?   @db.Text
+  entity_type        String?   @db.VarChar(50)
+  entity_id          Int?
+  created_at         DateTime? @default(now()) @db.Timestamp(0)
+  ip_address         String?   @db.VarChar(45)
+
+  admin Admin? @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@map("admin_activity_logs")
+}
+
+model AdminPreferences {
+  id            Int       @id @default(autoincrement())
+  admin_id      Int?
+  theme         String?   @default("system") @db.VarChar(20)
+  notify_email  Boolean?  @default(true)
+  notify_in_app Boolean?  @default(true)
+  default_view  String?   @default("dashboard") @db.VarChar(50)
+  updated_at    DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("admin_preferences")
+}
+
+model CommentRead {
+  id         Int       @id @default(autoincrement())
+  comment_id Int
+  user_id    Int
+  seen_at    DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("comment_reads")
+}
+
+enum AdminRole {
+  super_admin
+  support
+}
+
+enum CustomerScore {
+  hot
+  warm
+  cold
+}
+
+enum CustomerStage {
+  new
+  contacted
+  qualified
+  proposal_sent
+  negotiation
+  won
+  lost
+  follow_up_required
+  follow_up_done
+}
+
+enum OrderStatus {
+  new_lead
+  initiated
+  payment_failed
+  paid
+  onboarding_pending
+  processing
+  delivered
+  cancelled
+}
+
+enum ProposalStatus {
+  draft
+  sent
+  accepted
+  declined
+}
+
+enum InteractionType {
+  call_log
+  email_sent
+  whatsapp_msg
+  internal_note
+  system_event
+}
+
+enum InteractionSentiment {
+  positive
+  neutral
+  negative
+}
+
+enum TaskStatus {
+  open
+  in_progress
+  done
+}
+
+enum TaskPriority {
+  high
+  medium
+  low
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  updated_at  DateTime @default(now()) @updatedAt
+
+  @@map("system_settings")
+}
+
+model emailaccount {
+  id       String @id @default(cuid())
+  name     String // Display name (e.g., "Support Gmail")
+  email    String @unique
+  provider String // gmail, outlook, custom, etc.
+
+  // IMAP Settings
+  imapHost   String
+  imapPort   Int     @default(993)
+  imapSecure Boolean @default(true)
+
+  // SMTP Settings
+  smtpHost   String
+  smtpPort   Int     @default(587)
+  smtpSecure Boolean @default(false)
+
+  // Authentication
+  username String // Usually same as email
+  password String // Encrypted
+
+  // Status
+  isActive  Boolean   @default(true)
+  isDefault Boolean   @default(false)
+  lastSync  DateTime?
+
+  // Signature
+  signature     String? @db.Text
+  signatureHtml String? @db.Text
+  useSignature  Boolean @default(false)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("emailaccount")
+}
+
+model emaillog {
+  id        String   @id @default(cuid())
+  accountId String
+  direction String // "sent" or "received"
+  from      String
+  to        String
+  subject   String
+  body      String?  @db.LongText
+  status    String // "success" or "failed"
+  error     String?  @db.Text
+  timestamp DateTime @default(now())
+
+  @@index([accountId])
+  @@index([timestamp])
+  @@map("emaillog")
+}
+
+model cachedemail {
+  id          String   @id @default(cuid())
+  accountId   String
+  uid         Int
+  from        String
+  to          String
+  subject     String
+  textSnippet String   @db.Text
+  htmlContent String?  @db.LongText
+  date        DateTime
+  createdAt   DateTime @default(now())
+
+  folder          String  @default("INBOX")
+  hasAttachments  Boolean @default(false)
+  attachmentCount Int     @default(0)
+
+  @@unique([accountId, uid, folder])
+  @@index([accountId])
+  @@index([date])
+  @@map("cachedemail")
+}
+
+model emailattachment {
+  id          String   @id @default(cuid())
+  emailId     String // cachedemail.id or draftId
+  filename    String
+  contentType String
+  size        Int // bytes
+  data        String   @db.LongText // base64 encoded
+  createdAt   DateTime @default(now())
+
+  @@index([emailId])
+  @@map("emailattachment")
+}
+
+model emaildraft {
+  id             String   @id @default(cuid())
+  accountId      String
+  to             String?  @db.Text
+  cc             String?  @db.Text
+  bcc            String?  @db.Text
+  subject        String?
+  body           String?  @db.LongText
+  htmlBody       String?  @db.LongText
+  hasAttachments Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([updatedAt])
+  @@map("emaildraft")
+}
+
+model emailreadstatus {
+  id          String   @id @default(cuid())
+  accountId   String
+  emailUid    Int
+  emailFolder String   @default("INBOX")
+  isRead      Boolean  @default(true)
+  readAt      DateTime @default(now())
+
+  @@unique([accountId, emailUid, emailFolder])
+  @@index([accountId])
+  @@map("emailreadstatus")
+}
+
+model emaillabel {
+  id        String   @id @default(cuid())
+  accountId String
+  name      String
+  color     String   @default("#3B82F6")
+  icon      String?
+  createdAt DateTime @default(now())
+
+  @@unique([accountId, name])
+  @@index([accountId])
+  @@map("emaillabel")
+}
+
+model emaillabeling {
+  id          String   @id @default(cuid())
+  accountId   String
+  emailUid    Int
+  emailFolder String   @default("INBOX")
+  labelId     String
+  createdAt   DateTime @default(now())
+
+  @@unique([accountId, emailUid, emailFolder, labelId])
+  @@index([accountId])
+  @@index([labelId])
+  @@map("emaillabeling")
+}
+
+model emailthread {
+  id            String   @id @default(cuid())
+  accountId     String
+  subject       String   @db.VarChar(500)
+  participants  String   @db.Text
+  lastEmailDate DateTime
+  emailCount    Int      @default(1)
+  unreadCount   Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([lastEmailDate])
+  @@map("emailthread")
+}
+
+model emailthreadmember {
+  id          String   @id @default(cuid())
+  threadId    String
+  emailUid    Int
+  emailFolder String   @default("INBOX")
+  createdAt   DateTime @default(now())
+
+  @@unique([threadId, emailUid, emailFolder])
+  @@index([threadId])
+  @@map("emailthreadmember")
+}
+
+model contact {
+  id            String    @id @default(cuid())
+  accountId     String
+  email         String
+  name          String?
+  firstName     String?   @db.VarChar(100)
+  lastName      String?   @db.VarChar(100)
+  company       String?
+  phone         String?   @db.VarChar(50)
+  notes         String?   @db.Text
+  avatar        String?   @db.VarChar(500)
+  tags          String?   @db.Text
+  lastEmailDate DateTime?
+  emailCount    Int       @default(0)
+  isFavorite    Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([accountId, email])
+  @@index([accountId])
+  @@index([email])
+  @@map("contact")
+}
+
+model emailtemplate {
+  id         String    @id @default(cuid())
+  accountId  String
+  name       String    @db.VarChar(100)
+  subject    String?   @db.VarChar(500)
+  body       String?   @db.LongText
+  htmlBody   String?   @db.LongText
+  category   String?   @db.VarChar(50)
+  isShared   Boolean   @default(false)
+  usageCount Int       @default(0)
+  lastUsed   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([accountId])
+  @@index([category])
+  @@map("emailtemplate")
+}
+
+model scheduledemail {
+  id           String    @id @default(cuid())
+  accountId    String
+  to           String    @db.Text
+  cc           String?   @db.Text
+  bcc          String?   @db.Text
+  subject      String    @db.VarChar(500)
+  body         String?   @db.LongText
+  htmlBody     String?   @db.LongText
+  attachments  String?   @db.LongText
+  scheduledFor DateTime
+  status       String    @default("pending") @db.VarChar(20)
+  sentAt       DateTime?
+  error        String?   @db.Text
+  retryCount   Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([accountId])
+  @@index([scheduledFor])
+  @@index([status])
+  @@map("scheduledemail")
+}
+
+model emailfolder {
+  id          String   @id @default(cuid())
+  accountId   String
+  name        String   @db.VarChar(100)
+  type        String   @default("custom") @db.VarChar(20)
+  parent      String?
+  icon        String?  @db.VarChar(50)
+  color       String?  @db.VarChar(20)
+  emailCount  Int      @default(0)
+  unreadCount Int      @default(0)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@unique([accountId, name])
+  @@index([accountId])
+  @@map("emailfolder")
+}
+
+model emailrule {
+  id         String   @id @default(cuid())
+  accountId  String
+  name       String   @db.VarChar(100)
+  enabled    Boolean  @default(true)
+  priority   Int      @default(0)
+  conditions String   @db.Text
+  actions    String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([enabled])
+  @@map("emailrule")
+}
+
+model emailanalytics {
+  id              String   @id @default(cuid())
+  accountId       String
+  date            DateTime @db.Date
+  emailsSent      Int      @default(0)
+  emailsReceived  Int      @default(0)
+  emailsRead      Int      @default(0)
+  avgResponseTime Int?
+  topSender       String?  @db.VarChar(255)
+  topRecipient    String?  @db.VarChar(255)
+  createdAt       DateTime @default(now())
+
+  @@unique([accountId, date])
+  @@index([accountId])
+  @@index([date])
+  @@map("emailanalytics")
+}
+
+model emailtracking {
+  id         String    @id @default(cuid())
+  emailId    String
+  accountId  String
+  recipient  String
+  sentAt     DateTime
+  openedAt   DateTime?
+  clickedAt  DateTime?
+  openCount  Int       @default(0)
+  clickCount Int       @default(0)
+  ipAddress  String?   @db.VarChar(50)
+  userAgent  String?   @db.Text
+  createdAt  DateTime  @default(now())
+
+  @@index([accountId])
+  @@index([emailId])
+  @@map("emailtracking")
+}
+
+model sharedmailbox {
+  id          String   @id @default(cuid())
+  accountId   String
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  members     String   @db.Text
+  permissions String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([accountId])
+  @@map("sharedmailbox")
+}
+
+model webhook {
+  id          String    @id @default(cuid())
+  accountId   String
+  name        String    @db.VarChar(100)
+  url         String    @db.VarChar(500)
+  events      String    @db.Text
+  enabled     Boolean   @default(true)
+  secret      String?   @db.VarChar(100)
+  lastTrigger DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([accountId])
+  @@index([enabled])
+  @@map("webhook")
+}
+
+model LeadStage {
+  id            Int       @id @default(autoincrement())
+  value         String    @unique @db.VarChar(50)
+  label         String    @db.VarChar(100)
+  color         String?   @default("gray") @db.VarChar(50)
+  display_order Int?      @default(0)
+  is_active     Boolean?  @default(true)
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("lead_stages")
+}
+
+model LeadScore {
+  id            Int       @id @default(autoincrement())
+  value         String    @unique @db.VarChar(50)
+  label         String    @db.VarChar(100)
+  color         String?   @default("gray") @db.VarChar(50)
+  emoji         String?   @db.VarChar(10)
+  display_order Int?      @default(0)
+  is_active     Boolean?  @default(true)
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("lead_scores")
+}
+
+model SiteSetting {
+  id            Int       @id @default(autoincrement())
+  setting_key   String    @db.VarChar(100)
+  setting_value String?   @db.Text
+  description   String?   @db.VarChar(255)
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+  updated_at    DateTime? @default(now()) @updatedAt @db.Timestamp(0)
+
+  @@map("site_settings")
+}
+
+model LeadRead {
+  id           Int       @id @default(autoincrement())
+  admin_id     Int
+  lead_id      Int
+  last_read_at DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("lead_reads")
+}
+
+model AdminActivityLogOld {
+  id                 Int       @id @default(autoincrement())
+  admin_id           Int?
+  action_type        String    @db.VarChar(50)
+  action_description String?   @db.Text
+  entity_type        String?   @db.VarChar(50)
+  entity_id          Int?
+  ip_address         String?   @db.VarChar(45)
+  created_at         DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("admin_activity_log")
+}
+
+model Setting {
+  id            Int       @id @default(autoincrement())
+  setting_key   String    @db.VarChar(100)
+  setting_value String?   @db.Text
+  description   String?   @db.VarChar(255)
+  created_at    DateTime? @default(now()) @db.Timestamp(0)
+  updated_at    DateTime? @default(now()) @updatedAt @db.Timestamp(0)
+
+  @@map("settings")
+}
+
+model SmtpAccountOld {
+  id                      Int       @id @default(autoincrement())
+  name                    String    @db.VarChar(255)
+  provider                String    @db.VarChar(50)
+  host                    String    @db.VarChar(255)
+  imap_host               String?   @db.VarChar(255)
+  port                    Int
+  imap_port               Int?
+  username                String    @db.VarChar(255)
+  imap_user               String?   @db.VarChar(255)
+  encrypted_password      String    @db.Text
+  imap_encrypted_password String?   @db.Text
+  oauth_refresh_token     String?   @db.Text
+  oauth_access_token      String?   @db.Text
+  oauth_expires_at        DateTime? @db.DateTime(0)
+  from_email              String    @db.VarChar(255)
+  from_name               String    @db.VarChar(255)
+  dkim_selector           String?   @db.VarChar(255)
+  dkim_private_key        String?   @db.Text
+  created_by              Int?
+  created_at              DateTime? @default(now()) @db.DateTime(0)
+  updated_at              DateTime? @default(now()) @updatedAt @db.DateTime(0)
+  is_active               Boolean?  @default(true)
+  region                  String?   @db.VarChar(50)
+  last_synced_at          DateTime? @db.DateTime(0)
+
+  @@map("smtp_accounts")
+}
+
+// Table for storing emails (from original SQL dump)
+model EmailOld {
+  id              Int       @id @default(autoincrement())
+  customer_id     Int?
+  user_id         Int?
+  smtp_account_id Int?
+  status          String?   @default("draft") @db.VarChar(50)
+  recipient_to    Json
+  recipient_cc    Json?
+  recipient_bcc   Json?
+  subject         String?   @db.VarChar(255)
+  body_html       String?   @db.LongText
+  body_text       String?   @db.LongText
+  headers_json    Json?
+  related_task_id Int?
+  error_message   String?   @db.Text
+  sent_at         DateTime? @db.DateTime(0)
+  received_at     DateTime? @db.DateTime(0)
+  created_at      DateTime? @default(now()) @db.DateTime(0)
+  updated_at      DateTime? @default(now()) @updatedAt @db.DateTime(0)
+  direction       String?   @default("outbound") @db.VarChar(20)
+  message_id      String?   @db.VarChar(255)
+  in_reply_to     String?   @db.VarChar(255)
+  folder          String?   @default("SENT") @db.VarChar(50)
+  is_read         Boolean?  @default(true)
+  from_name       String?   @db.VarChar(255)
+  from_address    String?   @db.VarChar(255)
+
+  @@map("emails")
+}
+
+// Email send jobs queue
+model EmailSendJob {
+  id            Int       @id @default(autoincrement())
+  email_id      Int
+  status        String?   @db.VarChar(255)
+  attempt_count Int?      @default(0)
+  last_error    String?   @db.Text
+  started_at    DateTime? @db.DateTime(0)
+  finished_at   DateTime? @db.DateTime(0)
+  created_at    DateTime? @default(now()) @db.DateTime(0)
+
+  @@map("email_send_jobs")
+}
+
+// Task read status tracking
+model TaskRead {
+  id           Int       @id @default(autoincrement())
+  task_id      Int
+  user_id      Int
+  last_seen_at DateTime? @default(now()) @db.DateTime(0)
+  created_at   DateTime? @default(now()) @db.DateTime(0)
+
+  @@map("task_reads")
+}
+
+model TaskComment {
+  id         Int       @id @default(autoincrement())
+  task_id    Int
+  author_id  Int
+  body       String    @db.Text
+  created_at DateTime? @default(now()) @db.DateTime(0)
+  edited_at  DateTime? @db.DateTime(0)
+
+  @@map("task_comments")
+}
+
+model TaskHistory {
+  id          Int       @id @default(autoincrement())
+  task_id     Int
+  changed_by  Int?
+  change_type String    @db.VarChar(64)
+  field_name  String?   @db.VarChar(64)
+  old_value   String?   @db.Text
+  new_value   String?   @db.Text
+  created_at  DateTime? @default(now()) @db.DateTime(0)
+
+  @@map("task_history")
+}
+
+model Notification {
+  id                  Int       @id @default(autoincrement())
+  user_id             Int
+  type                String    @db.VarChar(50)
+  title               String    @db.VarChar(255)
+  message             String?   @db.Text
+  is_read             Boolean   @default(false)
+  related_entity_type String?   @db.VarChar(50)
+  related_entity_id   Int?
+  created_at          DateTime? @default(now()) @db.Timestamp(0)
+
+  @@map("notifications")
+}
+
+model UserPresence {
+  id         Int        @id @default(autoincrement())
+  userId     Int        @unique
+  status     UserStatus @default(OFFLINE)
+  lastSeenAt DateTime   @default(now())
+
+  user Admin @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_presence")
+}
+
+enum UserStatus {
+  ONLINE
+  OFFLINE
+  AWAY
+}
+
+model Meeting {
+  id          String    @id @default(cuid())
+  title       String
+  description String?   @db.Text
+  roomName    String    @unique
+  hostId      Int
+  status      String    @default("active")
+  startTime   DateTime  @default(now())
+  endTime     DateTime?
+  notes       String?   @db.LongText
+
+  host Admin @relation("AdminMeetings", fields: [hostId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("meetings")
+}
