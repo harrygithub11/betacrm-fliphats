@@ -1,0 +1,32 @@
+services:
+
+  betacrm-app:
+    build: .
+    container_name: betacrm-app
+    restart: always
+    env_file:
+      - .env
+    networks:
+      - web
+    expose:
+      - "3000"
+
+  betacrm-mysql:
+    image: mysql:8.0
+    container_name: betacrm-mysql
+    restart: always
+    env_file:
+      - .env
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backup.sql:/docker-entrypoint-initdb.d/backup.sql
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
+
+volumes:
+  mysql_data:
